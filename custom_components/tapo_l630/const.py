@@ -6,5 +6,7 @@ DOMAIN = "tapo_l630"
 PLATFORMS = ["light"]
 SCAN_INTERVAL = timedelta(seconds=15)
 
+CONF_DEVICES = "devices"
+
 MIN_COLOR_TEMP_KELVIN = 2500
 MAX_COLOR_TEMP_KELVIN = 6500

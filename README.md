@@ -6,7 +6,8 @@ bulbs. It is based on the KLAP implementation in
 
 ## Features
 
-- Local polling and control; the Tapo cloud is not used
+- Account-based automatic discovery of all online L630 bulbs
+- Local polling and control after discovery
 - Power and brightness control
 - Hue and saturation color control
 - Color temperature control from 2500 K to 6500 K
@@ -18,12 +19,10 @@ bulbs. It is based on the KLAP implementation in
 - Home Assistant 2024.4 or newer
 - A Tapo L630 already configured in the Tapo app
 - The bulb and Home Assistant on the same local network
-- The bulb's local IP address, preferably reserved in your router's DHCP
-  settings
 - Your Tapo account email and password
 
-The credentials are used only to authenticate directly with the bulb over the
-local network.
+Tapo Cloud is used during setup only to enumerate the bulbs linked to your
+account. Control and state polling happen directly over the local network.
 
 ## HACS installation
 
@@ -34,7 +33,8 @@ local network.
 4. Install **Tapo L630** and restart Home Assistant.
 5. Go to **Settings > Devices & services**, select **Add Integration**, and
    search for **Tapo L630**.
-6. Enter the bulb's IP address and your Tapo credentials.
+6. Enter your Tapo credentials. The integration will discover all online L630
+   bulbs linked to the account.
 
 ## Manual installation
 
@@ -44,10 +44,8 @@ the integration from **Settings > Devices & services**.
 
 ## Troubleshooting
 
-- Reserve the bulb's IP address in your router so the config entry remains
-  valid after a DHCP lease change.
 - Ensure guest Wi-Fi or client isolation is not blocking Home Assistant from
-  reaching the bulb.
+  reaching the bulbs or receiving UDP broadcast responses.
 - Tapo credentials are case-sensitive. Use the same credentials as the Tapo
   mobile app.
 

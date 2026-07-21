@@ -17,5 +17,5 @@ class TapoSessionError(TapoError):
     """Raised when the encrypted session has expired."""
 
 
-class UnsupportedDeviceError(TapoError):
-    """Raised when the configured device is not an L630."""
+class NoDevicesFoundError(TapoError):
+    """Raised when the account has no L630 bulbs."""

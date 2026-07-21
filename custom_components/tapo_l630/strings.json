@@ -3,31 +3,29 @@
     "step": {
       "user": {
         "title": "Add a Tapo L630",
-        "description": "Enter the bulb's local IP address and your Tapo account credentials. The bulb and Home Assistant must be on the same network.",
+        "description": "Enter your Tapo account credentials. All online L630 bulbs linked to the account will be discovered automatically. The bulbs and Home Assistant must be on the same network.",
         "data": {
-          "host": "IP address",
           "username": "Tapo email",
           "password": "Tapo password"
         }
       },
       "reauth_confirm": {
         "title": "Reauthenticate Tapo L630",
-        "description": "Enter the current credentials for this bulb.",
+        "description": "Enter the current password for this Tapo account.",
         "data": {
-          "username": "Tapo email",
           "password": "Tapo password"
         }
       }
     },
     "error": {
-      "cannot_connect": "Unable to connect to the bulb",
+      "cannot_connect": "Unable to connect to Tapo Cloud",
       "invalid_auth": "Invalid Tapo email or password",
-      "invalid_host": "Enter an IP address or hostname without a URL scheme",
-      "unsupported_device": "The device is not a Tapo L630",
-      "unknown": "Unexpected error communicating with the bulb"
+      "no_devices": "No Tapo L630 bulbs are linked to this account",
+      "unknown": "Unexpected error communicating with Tapo"
     },
     "abort": {
       "already_configured": "This bulb is already configured",
+      "account_updated": "Existing Tapo L630 entries were consolidated into this account",
       "reauth_successful": "Reauthentication was successful"
     }
   }

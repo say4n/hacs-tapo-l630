@@ -5,25 +5,23 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
-from yarl import URL
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .client import TapoL630Client
-from .const import DOMAIN
+from .cloud import TapoCloudClient
+from .const import CONF_DEVICES, DOMAIN
+from .discovery import async_find_account_l630s
 from .exceptions import (
+    NoDevicesFoundError,
     TapoAuthenticationError,
     TapoConnectionError,
     TapoError,
-    UnsupportedDeviceError,
 )
-from .util import decode_nickname
 
 _SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_HOST): str,
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
     }
@@ -33,7 +31,7 @@ _SCHEMA = vol.Schema(
 class TapoL630ConfigFlow(ConfigFlow, domain=DOMAIN):
     """Configure a Tapo L630 bulb."""
 
-    VERSION = 1
+    VERSION = 2
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -41,30 +39,26 @@ class TapoL630ConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle setup initiated by the user."""
         errors: dict[str, str] = {}
         if user_input is not None:
+            user_input[CONF_USERNAME] = user_input[CONF_USERNAME].strip()
             try:
-                user_input[CONF_HOST] = _normalize_host(user_input[CONF_HOST])
-                info = await self._async_validate(user_input)
-                model = str(info.get("model", ""))
-                if not model.upper().startswith("L630"):
-                    raise UnsupportedDeviceError
-            except ValueError:
-                errors["base"] = "invalid_host"
+                devices = await self._async_validate(user_input, discover=True)
             except TapoAuthenticationError:
                 errors["base"] = "invalid_auth"
             except TapoConnectionError:
                 errors["base"] = "cannot_connect"
-            except UnsupportedDeviceError:
-                errors["base"] = "unsupported_device"
+            except NoDevicesFoundError:
+                errors["base"] = "no_devices"
             except TapoError:
                 errors["base"] = "unknown"
             else:
-                device_id = str(info.get("device_id") or user_input[CONF_HOST])
-                await self.async_set_unique_id(device_id)
-                self._abort_if_unique_id_configured(
-                    updates={CONF_HOST: user_input[CONF_HOST]}
-                )
-                title = _device_name(info) or f"Tapo L630 ({user_input[CONF_HOST]})"
-                return self.async_create_entry(title=title, data=user_input)
+                username = user_input[CONF_USERNAME]
+                user_input[CONF_USERNAME] = username
+                user_input[CONF_DEVICES] = devices
+                if result := await self._async_consolidate_existing(user_input):
+                    return result
+                await self.async_set_unique_id(username.lower())
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(title=username, data=user_input)
 
         return self.async_show_form(
             step_id="user", data_schema=_SCHEMA, errors=errors
@@ -83,9 +77,9 @@ class TapoL630ConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reauth_entry()
         errors: dict[str, str] = {}
         if user_input is not None:
-            updated_data = {**entry.data, **user_input}
+            updated_data = {**entry.data, CONF_PASSWORD: user_input[CONF_PASSWORD]}
             try:
-                await self._async_validate(updated_data)
+                await self._async_validate(updated_data, discover=False)
             except TapoAuthenticationError:
                 errors["base"] = "invalid_auth"
             except TapoConnectionError:
@@ -99,9 +93,6 @@ class TapoL630ConfigFlow(ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
-                vol.Required(
-                    CONF_USERNAME, default=entry.data[CONF_USERNAME]
-                ): str,
                 vol.Required(CONF_PASSWORD): str,
             }
         )
@@ -109,26 +100,48 @@ class TapoL630ConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm", data_schema=schema, errors=errors
         )
 
-    async def _async_validate(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Connect and return validated device information."""
-        client = TapoL630Client(
+    async def _async_validate(
+        self, data: dict[str, Any], *, discover: bool
+    ) -> list[dict[str, Any]]:
+        """Authenticate the account and optionally discover its local bulbs."""
+        client = TapoCloudClient(
             async_get_clientsession(self.hass),
-            data[CONF_HOST],
             data[CONF_USERNAME],
             data[CONF_PASSWORD],
         )
-        return await client.async_get_device_info()
+        cloud_devices = await client.async_list_l630s()
+        if discover:
+            return await async_find_account_l630s(cloud_devices)
+        return []
 
+    async def _async_consolidate_existing(
+        self, data: dict[str, Any]
+    ) -> ConfigFlowResult | None:
+        """Replace legacy per-bulb entries with one account entry."""
+        username = data[CONF_USERNAME]
+        entries = [
+            entry
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+            if str(entry.data.get(CONF_USERNAME, "")).lower() == username.lower()
+        ]
+        if not entries:
+            return None
 
-def _device_name(info: dict[str, Any]) -> str | None:
-    """Get a useful unencoded device name."""
-    return decode_nickname(info.get("nickname"))
+        account_id = username.lower()
+        account_entries = [entry for entry in entries if entry.unique_id == account_id]
+        if len(entries) == 1 and account_entries:
+            return self.async_abort(reason="already_configured")
 
-
-def _normalize_host(value: str) -> str:
-    """Validate and normalize an IP address or hostname."""
-    host = value.strip().rstrip(".")
-    if not host or "://" in host or "/" in host or "?" in host or "#" in host:
-        raise ValueError
-    URL.build(scheme="http", host=host)
-    return host
+        primary = account_entries[0] if account_entries else entries[0]
+        self.hass.config_entries.async_update_entry(
+            primary,
+            data=data,
+            title=username,
+            unique_id=account_id,
+            version=self.VERSION,
+        )
+        for entry in entries:
+            if entry is not primary:
+                await self.hass.config_entries.async_remove(entry.entry_id)
+        await self.hass.config_entries.async_reload(primary.entry_id)
+        return self.async_abort(reason="account_updated")

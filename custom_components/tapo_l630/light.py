@@ -28,7 +28,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the light entity."""
-    async_add_entities([TapoL630Light(entry.runtime_data)])
+    async_add_entities(
+        TapoL630Light(coordinator)
+        for coordinator in entry.runtime_data.coordinators
+    )
 
 
 class TapoL630Light(CoordinatorEntity[TapoL630Coordinator], LightEntity):
@@ -50,7 +53,9 @@ class TapoL630Light(CoordinatorEntity[TapoL630Coordinator], LightEntity):
             identifiers={(DOMAIN, device_id)},
             manufacturer="TP-Link",
             model=model,
-            name=decode_nickname(info.get("nickname")) or "Tapo L630",
+            name=decode_nickname(info.get("nickname"))
+            or info.get("alias")
+            or "Tapo L630",
             sw_version=info.get("fw_ver"),
         )
 
