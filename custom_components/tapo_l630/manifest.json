@@ -1,0 +1,12 @@
+{
+  "domain": "tapo_l630",
+  "name": "Tapo L630",
+  "codeowners": ["@say4n"],
+  "config_flow": true,
+  "documentation": "https://github.com/say4n/hacs-tapo-l630",
+  "issue_tracker": "https://github.com/say4n/hacs-tapo-l630/issues",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}
