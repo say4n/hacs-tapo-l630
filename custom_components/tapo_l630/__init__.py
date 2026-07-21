@@ -33,7 +33,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     try:
         devices = await async_find_account_l630s(
-            hass, await cloud.async_list_l630s()
+            hass,
+            await cloud.async_list_l630s(),
         )
     except TapoAuthenticationError as err:
         raise ConfigEntryAuthFailed from err
@@ -53,7 +54,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config_entries.async_update_entry(entry, data=data)
         refreshed_roster = True
 
-    runtime = TapoL630Runtime(hass, entry, session)
+    runtime = TapoL630Runtime(hass, entry, session, cloud)
     if not refreshed_roster:
         try:
             await runtime.async_rediscover(force=True)

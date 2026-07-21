@@ -10,13 +10,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .client import TapoL630Client
 from .const import DOMAIN, SCAN_INTERVAL
 from .discovery import normalize_device_id
 from .exceptions import (
     TapoAuthenticationError,
     TapoConnectionError,
     TapoError,
+    TapoSessionError,
 )
 from .runtime import TapoL630Runtime
 
@@ -47,6 +47,8 @@ class TapoL630Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.expected_device_id = normalize_device_id(device.get("device_id"))
         host = device.get("host")
         self.client = runtime.client(host) if isinstance(host, str) else None
+        self._using_cloud = False
+        self._local_identity_validated = False
 
     async def async_initialize(self) -> None:
         """Fetch initial data while allowing an individual bulb to be offline."""
@@ -60,6 +62,21 @@ class TapoL630Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             self.async_set_updated_data(data)
 
+    async def async_set_device_info(self, **params: Any) -> None:
+        """Update the bulb, falling back to cloud if local control fails."""
+        if self.client is None or (
+            not self._using_cloud and not self._local_identity_validated
+        ):
+            await self._async_fetch_data()
+        try:
+            await self.client.async_set_device_info(**params)
+        except (TapoConnectionError, TapoAuthenticationError, TapoSessionError):
+            if self._using_cloud:
+                raise
+            self.runtime.invalidate_confirmed_host(self.expected_device_id)
+            await self._async_fetch_cloud()
+            await self.client.async_set_device_info(**params)
+
     async def _async_update_data(self) -> dict[str, Any]:
         try:
             return await self._async_fetch_data()
@@ -69,30 +86,70 @@ class TapoL630Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(str(err)) from err
 
     async def _async_fetch_data(self) -> dict[str, Any]:
+        if self._using_cloud:
+            try:
+                hosts = await self.runtime.async_rediscover()
+            except TapoConnectionError:
+                hosts = {}
+            if host := hosts.get(self.expected_device_id):
+                _LOGGER.debug(
+                    "Restoring LAN control for Tapo L630 %s",
+                    self.device["device_id"],
+                )
+                self.device["host"] = host
+                self.client = self.runtime.client(host)
+                self._using_cloud = False
+                self._local_identity_validated = False
+            else:
+                return await self._async_fetch_cloud()
+
         old_host = self.device.get("host")
         try:
             if self.client is None:
                 raise TapoConnectionError("The bulb has not been found on the LAN")
             info = await self.client.async_get_device_info()
             self._validate_identity(info)
+            self._local_identity_validated = True
             return info
-        except (TapoConnectionError, TapoAuthenticationError) as err:
+        except (
+            TapoConnectionError,
+            TapoAuthenticationError,
+            TapoSessionError,
+        ) as err:
+            self._local_identity_validated = False
+            self.runtime.invalidate_confirmed_host(self.expected_device_id)
             is_auth_error = isinstance(err, TapoAuthenticationError)
             hosts = await self.runtime.async_rediscover(force=is_auth_error)
             host = hosts.get(self.expected_device_id)
             if not host or host == old_host:
-                if is_auth_error and not self.runtime.is_confirmed(
-                    self.expected_device_id
-                ):
-                    raise TapoConnectionError(
-                        "The bulb has not been found on the LAN"
-                    ) from err
-                raise
+                return await self._async_fetch_cloud()
             self.device["host"] = host
             self.client = self.runtime.client(host)
-            info = await self.client.async_get_device_info()
-            self._validate_identity(info)
-            return info
+            self._local_identity_validated = False
+            try:
+                info = await self.client.async_get_device_info()
+                self._validate_identity(info)
+                self._local_identity_validated = True
+                return info
+            except (
+                TapoConnectionError,
+                TapoAuthenticationError,
+                TapoSessionError,
+            ):
+                return await self._async_fetch_cloud()
+
+    async def _async_fetch_cloud(self) -> dict[str, Any]:
+        """Fetch state through Tapo Cloud when local control is unavailable."""
+        if not self._using_cloud:
+            _LOGGER.debug(
+                "Using Tapo Cloud fallback for L630 %s", self.device["device_id"]
+            )
+        self.client = self.runtime.cloud_client(str(self.device["device_id"]))
+        self._using_cloud = True
+        self._local_identity_validated = False
+        info = await self.client.async_get_device_info()
+        self._validate_identity(info)
+        return info
 
     def _validate_identity(self, info: dict[str, Any]) -> None:
         """Ensure a host still represents the configured L630 bulb."""

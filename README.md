@@ -7,6 +7,7 @@ bulbs. It is based on the KLAP implementation in
 ## Features
 
 - Account-based automatic discovery of all online L630 bulbs
+- Automatic Tapo Cloud control fallback when LAN control is unavailable
 - Local polling and control after discovery
 - Power and brightness control
 - Hue and saturation color control
@@ -21,8 +22,8 @@ bulbs. It is based on the KLAP implementation in
 - The bulb and Home Assistant on the same local network
 - Your Tapo account email and password
 
-Tapo Cloud is used during setup and startup to enumerate the bulbs linked to
-your account. Control and state polling happen directly over the local network.
+Tapo Cloud enumerates the bulbs linked to your account and provides a control
+fallback when a bulb cannot be reached locally. LAN control is always preferred.
 
 ## HACS installation
 

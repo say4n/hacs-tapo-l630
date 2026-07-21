@@ -12,6 +12,7 @@ from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
 from .client import TapoL630Client
+from .cloud import TapoCloudClient, TapoCloudDeviceClient
 from .const import CONF_DEVICES
 from .discovery import (
     async_discover_l630s,
@@ -30,15 +31,21 @@ class TapoL630Runtime:
         hass: HomeAssistant,
         entry: ConfigEntry,
         session: ClientSession,
+        cloud: TapoCloudClient | None = None,
     ) -> None:
         self.hass = hass
         self.entry = entry
         self.session = session
+        self.cloud = cloud or TapoCloudClient(
+            session,
+            entry.data[CONF_USERNAME],
+            entry.data[CONF_PASSWORD],
+        )
         self.devices = [dict(device) for device in entry.data[CONF_DEVICES]]
         self.coordinators: list[Any] = []
         self._discovery_lock = asyncio.Lock()
         self._last_discovery = 0.0
-        self._confirmed_device_ids: set[str] = set()
+        self._confirmed_hosts: dict[str, str] = {}
 
     def client(self, host: str) -> TapoL630Client:
         """Create a local client using the account credentials."""
@@ -49,6 +56,14 @@ class TapoL630Runtime:
             self.entry.data[CONF_PASSWORD],
         )
 
+    def cloud_client(self, device_id: str) -> TapoCloudDeviceClient:
+        """Create a cloud relay client for a bulb."""
+        return self.cloud.device_client(device_id)
+
+    def invalidate_confirmed_host(self, device_id: str) -> None:
+        """Stop retrying a LAN host until a fresh discovery confirms it."""
+        self._confirmed_hosts.pop(device_id, None)
+
     async def async_rediscover(self, *, force: bool = False) -> dict[str, str]:
         """Refresh known bulb addresses and persist any changes."""
         async with self._discovery_lock:
@@ -57,7 +72,7 @@ class TapoL630Runtime:
                 _FORCED_DISCOVERY_COOLDOWN if force else _REDISCOVERY_COOLDOWN
             )
             if elapsed < cooldown:
-                return self._known_hosts()
+                return dict(self._confirmed_hosts)
 
             discovered = await async_discover_l630s(self.hass)
             self._last_discovery = monotonic()
@@ -69,15 +84,15 @@ class TapoL630Runtime:
                 normalize_device_id(device.get("mac")): device
                 for device in discovered
             }
-            confirmed_device_ids: set[str] = set()
             changed = False
+            confirmed_hosts: dict[str, str] = {}
             for device in self.devices:
                 device_id = normalize_device_id(device.get("device_id"))
                 device_mac = normalize_device_id(device.get("device_mac"))
                 local = devices_by_id.get(device_id) or devices_by_mac.get(device_mac)
                 if local:
-                    confirmed_device_ids.add(device_id)
                     host = local["host"]
+                    confirmed_hosts[device_id] = host
                     local_device_id = local.get("device_id")
                     if local_device_id != device.get("local_device_id"):
                         device["local_device_id"] = local_device_id
@@ -87,20 +102,8 @@ class TapoL630Runtime:
                 if host and host != device.get(CONF_HOST):
                     device[CONF_HOST] = host
                     changed = True
-            self._confirmed_device_ids = confirmed_device_ids
-
+            self._confirmed_hosts = confirmed_hosts
             if changed:
                 data = {**self.entry.data, CONF_DEVICES: self.devices}
                 self.hass.config_entries.async_update_entry(self.entry, data=data)
-            return self._known_hosts()
-
-    def is_confirmed(self, device_id: str) -> bool:
-        """Return whether the bulb answered the latest LAN discovery."""
-        return device_id in self._confirmed_device_ids
-
-    def _known_hosts(self) -> dict[str, str]:
-        return {
-            normalize_device_id(device.get("device_id")): device[CONF_HOST]
-            for device in self.devices
-            if isinstance(device.get(CONF_HOST), str)
-        }
+            return dict(self._confirmed_hosts)

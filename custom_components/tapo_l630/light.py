@@ -108,10 +108,10 @@ class TapoL630Light(CoordinatorEntity[TapoL630Coordinator], LightEntity):
                 min(MAX_COLOR_TEMP_KELVIN, kwargs[ATTR_COLOR_TEMP_KELVIN]),
             )
 
-        await self.coordinator.client.async_set_device_info(**params)
+        await self.coordinator.async_set_device_info(**params)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the bulb."""
-        await self.coordinator.client.async_set_device_info(device_on=False)
+        await self.coordinator.async_set_device_info(device_on=False)
         await self.coordinator.async_request_refresh()

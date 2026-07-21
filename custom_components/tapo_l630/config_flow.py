@@ -111,7 +111,10 @@ class TapoL630ConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         cloud_devices = await client.async_list_l630s()
         if discover:
-            return await async_find_account_l630s(self.hass, cloud_devices)
+            return await async_find_account_l630s(
+                self.hass,
+                cloud_devices,
+            )
         return []
 
     async def _async_consolidate_existing(
