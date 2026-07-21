@@ -15,7 +15,6 @@ from .client import TapoL630Client
 from .const import CONF_DEVICES
 from .discovery import (
     async_discover_l630s,
-    map_hosts_by_device_id,
     normalize_device_id,
 )
 
@@ -60,16 +59,35 @@ class TapoL630Runtime:
             if elapsed < cooldown:
                 return self._known_hosts()
 
-            discovered = await async_discover_l630s()
+            discovered = await async_discover_l630s(self.hass)
             self._last_discovery = monotonic()
-            hosts = map_hosts_by_device_id(discovered)
-            self._confirmed_device_ids = set(hosts)
+            devices_by_id = {
+                normalize_device_id(device.get("device_id")): device
+                for device in discovered
+            }
+            devices_by_mac = {
+                normalize_device_id(device.get("mac")): device
+                for device in discovered
+            }
+            confirmed_device_ids: set[str] = set()
             changed = False
             for device in self.devices:
-                host = hosts.get(normalize_device_id(device.get("device_id")))
+                device_id = normalize_device_id(device.get("device_id"))
+                device_mac = normalize_device_id(device.get("device_mac"))
+                local = devices_by_id.get(device_id) or devices_by_mac.get(device_mac)
+                if local:
+                    confirmed_device_ids.add(device_id)
+                    host = local["host"]
+                    local_device_id = local.get("device_id")
+                    if local_device_id != device.get("local_device_id"):
+                        device["local_device_id"] = local_device_id
+                        changed = True
+                else:
+                    host = None
                 if host and host != device.get(CONF_HOST):
                     device[CONF_HOST] = host
                     changed = True
+            self._confirmed_device_ids = confirmed_device_ids
 
             if changed:
                 data = {**self.entry.data, CONF_DEVICES: self.devices}

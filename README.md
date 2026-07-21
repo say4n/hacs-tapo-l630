@@ -21,8 +21,8 @@ bulbs. It is based on the KLAP implementation in
 - The bulb and Home Assistant on the same local network
 - Your Tapo account email and password
 
-Tapo Cloud is used during setup only to enumerate the bulbs linked to your
-account. Control and state polling happen directly over the local network.
+Tapo Cloud is used during setup and startup to enumerate the bulbs linked to
+your account. Control and state polling happen directly over the local network.
 
 ## HACS installation
 

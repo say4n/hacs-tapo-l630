@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import binascii
+from ipaddress import IPv4Address, ip_interface
 import json
+import logging
 import os
 import socket
 import struct
@@ -13,10 +15,13 @@ from typing import Any, cast
 from asyncio.transports import DatagramTransport
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from homeassistant.components.network import async_get_adapters
+from homeassistant.core import HomeAssistant
 
 from .exceptions import TapoConnectionError
 
 _DISCOVERY_PORTS = (20002, 20004)
+_LOGGER = logging.getLogger(__name__)
 
 
 class _TapoDiscoveryProtocol(asyncio.DatagramProtocol):
@@ -50,7 +55,9 @@ class _TapoDiscoveryProtocol(asyncio.DatagramProtocol):
         """Ignore per-interface broadcast errors."""
 
 
-async def async_discover_l630s(timeout: float = 5) -> list[dict[str, Any]]:
+async def async_discover_l630s(
+    hass: HomeAssistant, timeout: float = 5
+) -> list[dict[str, Any]]:
     """Broadcast a modern Tapo discovery request and return L630 responses."""
     loop = asyncio.get_running_loop()
     try:
@@ -64,26 +71,32 @@ async def async_discover_l630s(timeout: float = 5) -> list[dict[str, Any]]:
 
     protocol = cast(_TapoDiscoveryProtocol, protocol)
     query = _build_discovery_query()
+    targets = await _async_broadcast_targets(hass)
+    _LOGGER.debug("Sending Tapo discovery to: %s", ", ".join(sorted(targets)))
     try:
         for _ in range(3):
-            for port in _DISCOVERY_PORTS:
-                transport.sendto(query, ("255.255.255.255", port))
+            for target in targets:
+                for port in _DISCOVERY_PORTS:
+                    transport.sendto(query, (target, port))
             await asyncio.sleep(timeout / 3)
     finally:
         transport.close()
 
-    return [
+    devices = [
         device
         for device in protocol.devices.values()
         if str(device.get("device_model", "")).upper().startswith("L630")
     ]
+    _LOGGER.debug("Tapo discovery found %d L630 bulbs", len(devices))
+    return devices
 
 
 async def async_find_account_l630s(
+    hass: HomeAssistant,
     cloud_devices: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Match cloud account bulbs to devices responding on the LAN."""
-    local_devices = await async_discover_l630s()
+    local_devices = await async_discover_l630s(hass)
     local_by_id = {
         _normalize_identifier(device.get("device_id")): device
         for device in local_devices
@@ -103,12 +116,19 @@ async def async_find_account_l630s(
                 "alias": cloud_device.get("alias"),
                 "device_id": cloud_device.get("deviceId")
                 or (local and local.get("device_id")),
+                "device_mac": cloud_device.get("deviceMac"),
                 "host": host,
+                "local_device_id": local and local.get("device_id"),
                 "model": cloud_device.get("deviceModel")
                 or (local and local.get("device_model")),
             }
         )
 
+    _LOGGER.debug(
+        "Matched %d of %d account L630 bulbs to LAN addresses",
+        sum(isinstance(device.get("host"), str) for device in matched),
+        len(matched),
+    )
     return matched
 
 
@@ -143,17 +163,27 @@ def _normalize_identifier(value: Any) -> str:
     return str(value or "").lower().replace(":", "").replace("-", "")
 
 
-def map_hosts_by_device_id(
-    devices: list[dict[str, Any]],
-) -> dict[str, str]:
-    """Map normalized device IDs to their discovered hosts."""
-    return {
-        _normalize_identifier(device.get("device_id")): device["host"]
-        for device in devices
-        if isinstance(device.get("host"), str)
-    }
-
-
 def normalize_device_id(value: Any) -> str:
     """Return a normalized Tapo device ID."""
     return _normalize_identifier(value)
+
+
+async def _async_broadcast_targets(hass: HomeAssistant) -> set[str]:
+    """Return global and per-adapter IPv4 broadcast addresses."""
+    targets = {"255.255.255.255"}
+    for adapter in await async_get_adapters(hass):
+        if not adapter["enabled"]:
+            continue
+        for address in adapter["ipv4"]:
+            interface = ip_interface(
+                f"{address['address']}/{address['network_prefix']}"
+            )
+            if interface.ip.is_loopback:
+                continue
+            broadcast = interface.network.broadcast_address
+            if broadcast not in {
+                IPv4Address("127.255.255.255"),
+                interface.ip,
+            }:
+                targets.add(str(broadcast))
+    return targets

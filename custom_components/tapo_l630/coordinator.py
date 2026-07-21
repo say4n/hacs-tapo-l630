@@ -97,8 +97,13 @@ class TapoL630Coordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _validate_identity(self, info: dict[str, Any]) -> None:
         """Ensure a host still represents the configured L630 bulb."""
         actual_id = normalize_device_id(info.get("device_id"))
+        expected_ids = {
+            self.expected_device_id,
+            normalize_device_id(self.device.get("local_device_id")),
+        }
+        expected_ids.discard("")
         model = str(info.get("model", ""))
-        if actual_id != self.expected_device_id or (
+        if actual_id not in expected_ids or (
             model and not model.upper().startswith("L630")
         ):
             raise TapoConnectionError(
