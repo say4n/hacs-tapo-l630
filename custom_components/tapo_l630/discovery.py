@@ -169,17 +169,25 @@ def normalize_device_id(value: Any) -> str:
 
 
 async def _async_broadcast_targets(hass: HomeAssistant) -> set[str]:
-    """Return global and per-adapter IPv4 broadcast addresses."""
+    """Return global and per-adapter IPv4 broadcast addresses.
+
+    Include adapters disabled in Home Assistant's network selector because the
+    selected default can be a Docker bridge while bulbs remain on a physical LAN.
+    """
     targets = {"255.255.255.255"}
     for adapter in await async_get_adapters(hass):
-        if not adapter["enabled"]:
-            continue
         for address in adapter["ipv4"]:
             interface = ip_interface(
                 f"{address['address']}/{address['network_prefix']}"
             )
             if interface.ip.is_loopback:
                 continue
+            _LOGGER.debug(
+                "Tapo discovery adapter %s: %s (enabled=%s)",
+                adapter["name"],
+                interface,
+                adapter["enabled"],
+            )
             broadcast = interface.network.broadcast_address
             if broadcast not in {
                 IPv4Address("127.255.255.255"),
